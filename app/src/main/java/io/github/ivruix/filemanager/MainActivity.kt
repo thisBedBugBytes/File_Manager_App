@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.EditText
@@ -34,7 +35,8 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
     }
 
     private val requiredPermissions = arrayOf(
-        Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE
+        Manifest.permission.READ_EXTERNAL_STORAGE,
+        Manifest.permission.WRITE_EXTERNAL_STORAGE
     )
 
     private lateinit var recyclerView: RecyclerView
@@ -124,30 +126,49 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
     }
 
     override fun onFileLongClick(file: File, view: android.view.View) {
-        val uri = FileProvider.getUriForFile(this, applicationContext.packageName + ".provider", file)
-        val shareIntent = Intent(Intent.ACTION_SEND)
-        shareIntent.type = "*/*"
-        shareIntent.putExtra(Intent.EXTRA_STREAM, uri)
-        startActivity(Intent.createChooser(shareIntent, "Share file using"))
-    }
-
-    private fun launchFile(file: File) {
-        val uri = FileProvider.getUriForFile(this, applicationContext.packageName + ".provider", file)
-        val intent = Intent(Intent.ACTION_VIEW)
-        val mimeType = getMimeType(uri)
-
-        intent.setDataAndType(uri, mimeType)
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-
-        val chooser = Intent.createChooser(intent, "Open with")
-        if (intent.resolveActivity(packageManager) != null) {
-            startActivity(chooser)
+        try {
+            val uri = FileProvider.getUriForFile(this, "${packageName}.provider", file)
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, "Share file using"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error sharing file: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e("MainActivity", "Error sharing file", e)
         }
     }
 
-    private fun getMimeType(uri: Uri): String? {
-        val extension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(uri.toString())
-        return android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+    private fun launchFile(file: File) {
+        if (!file.exists()) {
+            Toast.makeText(this, "File not found: ${file.name}", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        try {
+            val uri = FileProvider.getUriForFile(this, "${packageName}.provider", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, getMimeType(uri))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(Intent.createChooser(intent, "Open with"))
+            } else {
+                Toast.makeText(this, "No app found to open this file", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error opening file: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e("MainActivity", "Error launching file", e)
+        }
+    }
+
+    private fun getMimeType(uri: Uri): String {
+        return contentResolver.getType(uri)
+            ?: android.webkit.MimeTypeMap.getFileExtensionFromUrl(uri.toString())?.let {
+                android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.lowercase())
+            } ?: "*/*"
     }
 
     private fun getFileTimeOfCreation(file: File): Long {
@@ -171,32 +192,26 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
                 sortBy = SortBy.SORT_BY_NAME
                 initRecyclerView()
             }
-
             R.id.menu_sort_by_size -> {
                 sortBy = SortBy.SORT_BY_SIZE
                 initRecyclerView()
             }
-
             R.id.menu_sort_by_time_of_creation -> {
                 sortBy = SortBy.SORT_BY_TIME_OF_CREATION
                 initRecyclerView()
             }
-
             R.id.menu_sort_by_extension -> {
                 sortBy = SortBy.SORT_BY_EXTENSION
                 initRecyclerView()
             }
-
             R.id.menu_sort_ascending -> {
                 sortAscending = true
                 initRecyclerView()
             }
-
             R.id.menu_sort_descending -> {
                 sortAscending = false
                 initRecyclerView()
             }
-
             R.id.menu_search -> {
                 showSearchDialog()
             }
@@ -227,8 +242,9 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
     }
 
     private fun startSearch(query: String) {
-        // Cancel previous job if running
         searchJob?.cancel()
+
+        Log.d("MainActivity", "Starting search for query: $query")
 
         progressDialog = AlertDialog.Builder(this)
             .setTitle("Searching...")
@@ -238,18 +254,26 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
         progressDialog?.show()
 
         searchJob = CoroutineScope(Dispatchers.IO).launch {
-            val resultFiles = searchFilesRecursively(File(Environment.getExternalStorageDirectory().absolutePath), query)
-
-            withContext(Dispatchers.Main) {
-                progressDialog?.dismiss()
-                if (resultFiles.isEmpty()) {
-                    Toast.makeText(this@MainActivity, "No matching files or folders found.", Toast.LENGTH_SHORT).show()
-                } else {
-                    adapter = FileAdapter(this@MainActivity, resultFiles)
-                    adapter.setOnItemClickListener(this@MainActivity)
-                    adapter.setOnFileLongClickListener(this@MainActivity)
-                    recyclerView.adapter = adapter
-                    isShowingSearchResults = true
+            try {
+                val resultFiles = searchFilesRecursively(File(Environment.getExternalStorageDirectory().absolutePath), query)
+                withContext(Dispatchers.Main) {
+                    progressDialog?.dismiss()
+                    if (resultFiles.isEmpty()) {
+                        Toast.makeText(this@MainActivity, "No matching files or folders found.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        adapter = FileAdapter(this@MainActivity, resultFiles)
+                        adapter.setOnItemClickListener(this@MainActivity)
+                        adapter.setOnFileLongClickListener(this@MainActivity)
+                        recyclerView.adapter = adapter
+                        isShowingSearchResults = true
+                        Log.d("MainActivity", "Search found ${resultFiles.size} results")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Search failed: ${e.localizedMessage}", e)
+                withContext(Dispatchers.Main) {
+                    progressDialog?.dismiss()
+                    Toast.makeText(this@MainActivity, "Search error: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         }
