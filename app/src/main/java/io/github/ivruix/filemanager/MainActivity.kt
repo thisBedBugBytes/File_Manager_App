@@ -4,25 +4,27 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.os.Environment
 import android.view.Menu
 import android.view.MenuItem
-import android.view.View
-import android.webkit.MimeTypeMap
+import android.widget.EditText
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import kotlinx.coroutines.*
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.BasicFileAttributes
 
 class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
     FileAdapter.OnFileLongClickListener {
+
     enum class SortBy {
         SORT_BY_NAME, SORT_BY_SIZE, SORT_BY_TIME_OF_CREATION, SORT_BY_EXTENSION
     }
@@ -42,15 +44,17 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
     private var sortAscending: Boolean = true
 
     private var currentPath: String? = null
+    private var isShowingSearchResults = false
+
+    private var searchJob: Job? = null
+    private var progressDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Get current path
         currentPath = intent.getStringExtra("path")
 
-        // Check for permissions
         if (!allPermissionsGranted()) {
             ActivityCompat.requestPermissions(this, requiredPermissions, REQUEST_CODE_PERMISSIONS)
         } else {
@@ -76,19 +80,33 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
         recyclerView = findViewById(R.id.recyclerView)
         recyclerView.layoutManager = LinearLayoutManager(this)
 
-        adapter = FileAdapter(this, getFiles())
+        val path = currentPath ?: Environment.getExternalStorageDirectory().absolutePath
+        val file = File(path)
+
+        val fileList = file.listFiles()?.toMutableList() ?: mutableListOf()
+
+        when (sortBy) {
+            SortBy.SORT_BY_NAME -> fileList.sortWith(compareBy { it.name.lowercase() })
+            SortBy.SORT_BY_SIZE -> fileList.sortWith(compareBy { if (it.isFile) it.length() else 0L })
+            SortBy.SORT_BY_TIME_OF_CREATION -> fileList.sortWith(compareBy { getFileTimeOfCreation(it) })
+            SortBy.SORT_BY_EXTENSION -> fileList.sortWith(compareBy { if (it.isFile) it.extension.lowercase() else "" })
+        }
+
+        if (!sortAscending) {
+            fileList.reverse()
+        }
+
+        adapter = FileAdapter(this, ArrayList(fileList))
         adapter.setOnItemClickListener(this)
         adapter.setOnFileLongClickListener(this)
         recyclerView.adapter = adapter
+
+        isShowingSearchResults = false
     }
 
-    // Checks whether all necessary permissions are granted
     private fun allPermissionsGranted(): Boolean {
         for (permission in requiredPermissions) {
-            if (ContextCompat.checkSelfPermission(
-                    this, permission
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
+            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
                 return false
             }
         }
@@ -97,20 +115,16 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
 
     override fun onItemClick(file: File) {
         if (file.isDirectory) {
-            // If user clicked on a directory navigate into it
             val intent = Intent(this, MainActivity::class.java)
             intent.putExtra("path", file.absolutePath)
             startActivity(intent)
         } else {
-            // If user clicked on a file open it
             launchFile(file)
         }
     }
 
-    override fun onFileLongClick(file: File, view: View) {
-        // Share file on long click
-        val uri =
-            FileProvider.getUriForFile(this, applicationContext.packageName + ".provider", file)
+    override fun onFileLongClick(file: File, view: android.view.View) {
+        val uri = FileProvider.getUriForFile(this, applicationContext.packageName + ".provider", file)
         val shareIntent = Intent(Intent.ACTION_SEND)
         shareIntent.type = "*/*"
         shareIntent.putExtra(Intent.EXTRA_STREAM, uri)
@@ -118,16 +132,13 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
     }
 
     private fun launchFile(file: File) {
-        val uri =
-            FileProvider.getUriForFile(this, applicationContext.packageName + ".provider", file)
+        val uri = FileProvider.getUriForFile(this, applicationContext.packageName + ".provider", file)
         val intent = Intent(Intent.ACTION_VIEW)
         val mimeType = getMimeType(uri)
 
         intent.setDataAndType(uri, mimeType)
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 
-        // Check if an app exists that can open this file
-        // If there are multiple suitable apps then give user a choice between them
         val chooser = Intent.createChooser(intent, "Open with")
         if (intent.resolveActivity(packageManager) != null) {
             startActivity(chooser)
@@ -135,45 +146,22 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
     }
 
     private fun getMimeType(uri: Uri): String? {
-        val extension = MimeTypeMap.getFileExtensionFromUrl(uri.toString())
-        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
-    }
-
-    private fun getFiles(): ArrayList<File> {
-        val files = ArrayList<File>()
-        val directory = File(currentPath ?: Environment.getExternalStorageDirectory().absolutePath)
-
-        val fileList = directory.listFiles()
-
-        if (fileList != null) {
-            for (file in fileList) {
-                files.add(file)
-            }
-        }
-
-        // Sort files
-        when (sortBy) {
-            SortBy.SORT_BY_NAME -> files.sortBy { it.name }
-            SortBy.SORT_BY_SIZE -> files.sortBy { if (it.isFile) it.length() else 0 }
-            SortBy.SORT_BY_TIME_OF_CREATION -> files.sortBy { getFileTimeOfCreation(it) }
-            SortBy.SORT_BY_EXTENSION -> files.sortBy { if (it.isFile) it.extension else "" }
-        }
-        if (!sortAscending) {
-            files.reverse()
-        }
-
-        return files
+        val extension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(uri.toString())
+        return android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
     }
 
     private fun getFileTimeOfCreation(file: File): Long {
-        val attr = Files.readAttributes(
-            file.toPath(), BasicFileAttributes::class.java
-        )
-        return attr.creationTime().toMillis()
+        return try {
+            val attr = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
+            attr.creationTime().toMillis()
+        } catch (e: Exception) {
+            0L
+        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)
+        menu?.add(0, R.id.menu_search, 999, "Search")?.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
         return true
     }
 
@@ -208,19 +196,110 @@ class MainActivity : AppCompatActivity(), FileAdapter.OnItemClickListener,
                 sortAscending = false
                 initRecyclerView()
             }
-        }
 
+            R.id.menu_search -> {
+                showSearchDialog()
+            }
+        }
         return true
     }
 
+    private fun showSearchDialog() {
+        val editText = EditText(this)
+        editText.hint = "Enter file or folder name"
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Search")
+            .setView(editText)
+            .setPositiveButton("Search") { _, _ ->
+                val query = editText.text.toString().trim()
+                if (query.isNotEmpty()) {
+                    startSearch(query)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .setNeutralButton("Reset") { _, _ ->
+                initRecyclerView()
+            }
+            .create()
+
+        dialog.show()
+    }
+
+    private fun startSearch(query: String) {
+        // Cancel previous job if running
+        searchJob?.cancel()
+
+        progressDialog = AlertDialog.Builder(this)
+            .setTitle("Searching...")
+            .setMessage("Please wait while searching files.")
+            .setCancelable(false)
+            .create()
+        progressDialog?.show()
+
+        searchJob = CoroutineScope(Dispatchers.IO).launch {
+            val resultFiles = searchFilesRecursively(File(Environment.getExternalStorageDirectory().absolutePath), query)
+
+            withContext(Dispatchers.Main) {
+                progressDialog?.dismiss()
+                if (resultFiles.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "No matching files or folders found.", Toast.LENGTH_SHORT).show()
+                } else {
+                    adapter = FileAdapter(this@MainActivity, resultFiles)
+                    adapter.setOnItemClickListener(this@MainActivity)
+                    adapter.setOnFileLongClickListener(this@MainActivity)
+                    recyclerView.adapter = adapter
+                    isShowingSearchResults = true
+                }
+            }
+        }
+    }
+
+    private fun searchFilesRecursively(root: File, query: String): ArrayList<File> {
+        val result = ArrayList<File>()
+
+        try {
+            val files = root.listFiles()
+            if (files != null) {
+                for (file in files) {
+                    if (file.name.contains(query, ignoreCase = true)) {
+                        result.add(file)
+                    }
+                    if (file.isDirectory) {
+                        result.addAll(searchFilesRecursively(file, query))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        return result
+    }
+
     override fun onDestroy() {
-        // Update file hashes
+        searchJob?.cancel()
         val db = FileHashDatabaseHelper(this)
-        for (file in getFiles()) {
+        for (file in getFilesRecursive(Environment.getExternalStorageDirectory())) {
             if (file.isFile) {
                 db.insertFileHash(file)
             }
         }
         super.onDestroy()
+    }
+
+    private fun getFilesRecursive(dir: File): ArrayList<File> {
+        val files = ArrayList<File>()
+        val fileList = dir.listFiles()
+        if (fileList != null) {
+            for (file in fileList) {
+                if (file.isDirectory) {
+                    files.addAll(getFilesRecursive(file))
+                } else {
+                    files.add(file)
+                }
+            }
+        }
+        return files
     }
 }

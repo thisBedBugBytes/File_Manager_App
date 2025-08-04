@@ -19,7 +19,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-
 class FileAdapter(private val context: Context, private val files: ArrayList<File>) :
     RecyclerView.Adapter<FileAdapter.ViewHolder>() {
 
@@ -118,9 +117,15 @@ class FileAdapter(private val context: Context, private val files: ArrayList<Fil
                 "xlsx" -> holder.fileIcon.setImageResource(R.drawable.xlsx)
                 "zip" -> holder.fileIcon.setImageResource(R.drawable.zip)
                 "png", "jpg", "bmp" -> {
-                    // Set preview for images
-                    val bitmap = BitmapFactory.decodeFile(file.absolutePath)
-                    holder.fileIcon.setImageBitmap(bitmap)
+                    // Safer image preview loading to avoid OOM crashes
+                    try {
+                        val options = BitmapFactory.Options()
+                        options.inSampleSize = 8
+                        val bitmap = BitmapFactory.decodeFile(file.absolutePath, options)
+                        holder.fileIcon.setImageBitmap(bitmap)
+                    } catch (e: Exception) {
+                        holder.fileIcon.setImageResource(R.drawable.blank)
+                    }
                 }
 
                 else -> holder.fileIcon.setImageResource(R.drawable.blank)
@@ -136,12 +141,15 @@ class FileAdapter(private val context: Context, private val files: ArrayList<Fil
         }
     }
 
-
     private fun getFileTimeOfCreation(file: File): Long {
-        val attr = Files.readAttributes(
-            file.toPath(), BasicFileAttributes::class.java
-        )
-        return attr.creationTime().toMillis()
+        return try {
+            val attr = Files.readAttributes(
+                file.toPath(), BasicFileAttributes::class.java
+            )
+            attr.creationTime().toMillis()
+        } catch (e: Exception) {
+            0L
+        }
     }
 
     private fun bytesToString(bytes: Long): String {
