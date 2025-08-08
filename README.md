@@ -11,7 +11,7 @@ This is a simple file manager app built using Kotlin in Android Studio. The app 
 - Long-press on a file to share it.
 - Image file preview.
 - Files that have been changed since the last time you've seen them are displayed with a blue background.
-- Files and folders can be searched and accessed easily 
+- Files and folders can be searched and accessed easily
 
 ## Screenshots
 
