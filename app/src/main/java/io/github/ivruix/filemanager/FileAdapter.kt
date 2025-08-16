@@ -33,6 +33,7 @@ class FileAdapter(private val context: Context, private val files: ArrayList<Fil
 
     private var onItemClickListener: OnItemClickListener? = null
     private var onFileLongClickListener: OnFileLongClickListener? = null
+    private var onDeleteListener: ((file: java.io.File, position: Int) -> Unit)? = null
 
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView),
         View.OnCreateContextMenuListener {
@@ -63,6 +64,17 @@ class FileAdapter(private val context: Context, private val files: ArrayList<Fil
             if (file.isFile) {
                 menu?.add(Menu.NONE, 0, Menu.NONE, "Share")?.setOnMenuItemClickListener {
                     onFileLongClickListener?.onFileLongClick(file, itemView)
+                    true
+                }
+                // ADD THIS DELETE OPTION
+                menu?.add(Menu.NONE, 1, Menu.NONE, "Delete")?.setOnMenuItemClickListener {
+                    onDeleteListener?.invoke(file, position)
+                    true
+                }
+            } else if (file.isDirectory) {
+                // ADD DELETE FOR FOLDERS TOO
+                menu?.add(Menu.NONE, 1, Menu.NONE, "Delete")?.setOnMenuItemClickListener {
+                    onDeleteListener?.invoke(file, position)
                     true
                 }
             }
@@ -192,7 +204,18 @@ class FileAdapter(private val context: Context, private val files: ArrayList<Fil
         this.onItemClickListener = onItemClickListener
     }
 
+    fun setOnDeleteListener(listener: (java.io.File, Int) -> Unit) {
+        onDeleteListener = listener
+    }
+
     fun setOnFileLongClickListener(onFileLongClickListener: OnFileLongClickListener) {
         this.onFileLongClickListener = onFileLongClickListener
+    }
+    fun removeAt(position: Int) {
+        if (position >= 0 && position < files.size) {
+            files.removeAt(position)
+            notifyItemRemoved(position)
+            notifyItemRangeChanged(position, files.size - position)
+        }
     }
 }
