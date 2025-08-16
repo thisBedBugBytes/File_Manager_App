@@ -36,6 +36,8 @@ Note that the app requires permission to access files on the device, so it will 
 
 To use the app, simply open it and navigate to the desired folder using the file browser. The files in the folder will be displayed in a RecyclerView, sorted by name by default. You can sort the files using the sorting menu in the app bar.
 
+The app must given permission to access all files present in the android device to properly function.
+
 If a file name is too long to fit in the available space, it will be truncated with an ellipsis to preserve as much information as possible.
 
 Tap on a file to open it in an appropriate application. To share a file, long-press on it to open the system share dialog. From there, you can select the app you want to use to share the file.
