@@ -14,6 +14,7 @@ This is a simple file manager app built using Kotlin in Android Studio. The app 
 - Files and folders can be searched and accessed easily
 - Any specific file can be deleted from the android device
 - Any files can be shared using other platforms including gmail,whatsapp and other medias.
+  
 
 ## Screenshots
 
